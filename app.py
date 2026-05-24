@@ -5,13 +5,13 @@ import streamlit as st
 from streamlit_folium import st_folium
 import urllib.parse
 import requests
-from streamlit_js_eval import streamlit_js_eval
+from streamlit_geolocation import streamlit_geolocation
 
 # 設定網頁標題與圖標
 st.set_page_config(page_title="桃憩時光 - 桃園智慧咖啡廳搜尋", page_icon="☕", layout="wide")
 
 # --- 效能優化：使用 Cache 快取資料庫，避免每次操作都重新讀取 CSV ---
-@st.cache_data
+@st.cache_datas
 def load_data():
     try:
         return pd.read_csv("cafe.csv")
@@ -99,32 +99,25 @@ my_lat, my_lng = 24.9537, 121.2256
 current_loc_title = "中壢火車站"
 
 if location_consent == "✅ 同意授權使用我目前的真實 GPS 定位":
-    # 📡 呼叫 JavaScript 獲取經緯度
-    gps_location = streamlit_js_eval(data_of='get_geolocation', re_key='user_location')
+    st.info("👇 請點擊下方按鈕，讓 Safari 確認這是您本人的操作（Apple 安全限制）")
     
-    if gps_location and 'coords' in gps_location:
-        my_lat = gps_location['coords']['latitude']
-        my_lng = gps_location['coords']['longitude']
+    # 產生一個 Apple 信任的實體按鈕
+    gps_location = streamlit_geolocation()
+    
+    # 這個套件回傳的格式不同，我們用 .get('latitude') 來判斷有沒有成功抓到
+    if gps_location and gps_location.get('latitude') is not None:
+        my_lat = gps_location['latitude']
+        my_lng = gps_location['longitude']
         real_address = reverse_geocode(my_lat, my_lng)
         st.success(f"🎯 GPS 定位成功！系統偵測到您目前位於：【{real_address}】")
         current_loc_title = f"您的位置 ({real_address})"
     else:
         st.warning("""
-        ⚠️ **【系統提示：自動定位未成功】**
-        
-        偵測到您的瀏覽器拒絕了位置權限，或是處於非安全連線 (HTTP)。
-        如果是在本機測試，請確認您的網址是 `http://localhost:8501`。
-        
-        **💡 解決方法：** 請勾選上方的 **「❌ 不同意位置追蹤」** 進行手動輸入。
+        ⚠️ **【系統提示：等待定位中】**
+        請點擊上方按鈕，並在手機彈出的視窗選擇「允許」。
+        如果依然無法定位，請勾選上方的 **「❌ 不同意位置追蹤」** 進行手動輸入。
         """)
         st.info("ℹ️ 目前地圖暫時先幫您以預設起點【中壢火車站】載入。")
-else:
-    st.write("#### 🏠 手動設定您的位置")
-    user_start_input = st.text_input("輸入地址或地標：", value="中壢火車站")
-    
-    my_lat, my_lng = geocode_address(user_start_input)
-    st.success(f"🏠 地圖已成功定位至您指定的起點：【{user_start_input}】")
-    current_loc_title = f"{user_start_input}"
 
 # ─── 側邊欄與地圖渲染 (維持原樣) ───
 st.sidebar.header("🔍 搜尋與篩選條件")
