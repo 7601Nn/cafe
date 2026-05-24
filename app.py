@@ -99,7 +99,7 @@ my_lat, my_lng = 24.9537, 121.2256
 current_loc_title = "中壢火車站"
 
 if location_consent == "✅ 同意授權使用我目前的真實 GPS 定位":
-    st.info("👇 請點擊下方按鈕，讓 Safari 確認這是您本人的操作（Apple 安全限制）")
+    st.info("👇 請點擊下方按鈕，讓瀏覽器確認這是您本人的操作")
     
     # --- 新增的 CSS 樣式魔法 ---
     st.markdown(
