@@ -11,7 +11,7 @@ from streamlit_geolocation import streamlit_geolocation
 st.set_page_config(page_title="桃憩時光 - 桃園智慧咖啡廳搜尋", page_icon="☕", layout="wide")
 
 # --- 效能優化：使用 Cache 快取資料庫，避免每次操作都重新讀取 CSV ---
-@st.cache_datas
+@st.cache_data
 def load_data():
     try:
         return pd.read_csv("cafe.csv")
