@@ -1,0 +1,5 @@
+TaoCafeFinder/
+├── app.py              # 這是你的 Streamlit 主程式
+├── cafe.csv            # 你的咖啡廳資料庫（請確保這個檔案存在）
+├── requirements.txt    # 專案所需的套件清單
+└── .gitignore          # (可選) 如果你要上傳 GitHub，用來忽略不必要的檔案
