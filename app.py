@@ -101,10 +101,27 @@ current_loc_title = "中壢火車站"
 if location_consent == "✅ 同意授權使用我目前的真實 GPS 定位":
     st.info("👇 請點擊下方按鈕，讓 Safari 確認這是您本人的操作（Apple 安全限制）")
     
+    # --- 新增的 CSS 樣式魔法 ---
+    st.markdown(
+        """
+        <style>
+        /* 找到定位按鈕並把它放大 */
+        button[title="Get Location"] {
+            transform: scale(2.0); /* 這裡的 2.0 代表放大兩倍，你可以改成 1.5 或是 3.0 */
+            transform-origin: left center; /* 讓它從左邊開始放大，避免跑版 */
+            margin-top: 15px;
+            margin-bottom: 15px;
+            margin-left: 10px;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
+    # ----------------------------
+
     # 產生一個 Apple 信任的實體按鈕
     gps_location = streamlit_geolocation()
     
-    # 這個套件回傳的格式不同，我們用 .get('latitude') 來判斷有沒有成功抓到
     if gps_location and gps_location.get('latitude') is not None:
         my_lat = gps_location['latitude']
         my_lng = gps_location['longitude']
