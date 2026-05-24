@@ -107,7 +107,7 @@ if location_consent == "✅ 同意授權使用我目前的真實 GPS 定位":
         <style>
         /* 找到定位按鈕並把它放大 */
         button[title="Get Location"] {
-            transform: scale(4.0); /* 這裡的 2.0 代表放大兩倍，你可以改成 1.5 或是 3.0 */
+            transform: scale(10.0); /* 這裡的 2.0 代表放大兩倍，你可以改成 1.5 或是 3.0 */
             transform-origin: left center; /* 讓它從左邊開始放大，避免跑版 */
             margin-top: 15px;
             margin-bottom: 15px;
