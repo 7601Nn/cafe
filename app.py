@@ -68,7 +68,7 @@ def reverse_geocode(lat, lng):
         pass
     return "您的當前位置"
 
-# 4. 智慧搜尋核心函式
+# 4. 本地資料庫智慧搜尋函式
 def search_cafes(user_lat, user_lng, selected_tags, keyword="", max_distance_km=1.0):
     df = load_data()
     if df.empty:
@@ -83,6 +83,89 @@ def search_cafes(user_lat, user_lng, selected_tags, keyword="", max_distance_km=
     if keyword.strip():
         filtered_df = filtered_df[filtered_df["name"].str.contains(keyword, na=False, case=False)]
     return filtered_df
+
+# 5. 新增：Google Places API (New) 即時連線搜尋函式
+@st.cache_data(ttl=1800)  # 快取 30 分鐘，兼顧即時性與額度節省
+def search_google_cafes(user_lat, user_lng, max_distance_km, keyword=""):
+    # 從安全保險箱安全讀取金鑰
+    if "GOOGLE_API_KEY" in st.secrets:
+        api_key = st.secrets["GOOGLE_API_KEY"]
+    else:
+        st.error("🔑 找不到 GOOGLE_API_KEY！請確認 `.streamlit/secrets.toml` 檔案已正確建立並寫入金鑰。")
+        return pd.DataFrame()
+
+    # 如果有輸入關鍵字，使用 Text Search 文本搜尋；沒輸入則用 Nearby Search 鄰近搜尋
+    if keyword.strip():
+        url = "https://places.googleapis.com/v1/places:searchText"
+        headers = {
+            "Content-Type": "application/json",
+            "X-Goog-Api-Key": api_key,
+            "X-Goog-FieldMask": "places.displayName,places.formattedAddress,places.regularOpeningHours.openNow,places.location"
+        }
+        payload = {
+            "textQuery": f"桃園 {keyword} 咖啡廳",
+            "languageCode": "zh-TW"
+        }
+    else:
+        url = "https://places.googleapis.com/v1/places:searchNearby"
+        headers = {
+            "Content-Type": "application/json",
+            "X-Goog-Api-Key": api_key,
+            "X-Goog-FieldMask": "places.displayName,places.formattedAddress,places.regularOpeningHours.openNow,places.location"
+        }
+        payload = {
+            "includedTypes": ["coffee_shop"],
+            "maxResultCount": 20, # 限制回傳數量，避免地圖太雜亂
+            "locationRestriction": {
+                "circle": {
+                    "center": {"latitude": user_lat, "longitude": user_lng},
+                    "radius": min(int(max_distance_km * 1000), 50000) # 轉為公尺，上限 50 公里
+                }
+            },
+            "languageCode": "zh-TW"
+        }
+
+    try:
+        response = requests.post(url, headers=headers, json=payload, timeout=5)
+        response.raise_for_status()
+        data = response.json()
+
+        cafe_list = []
+        if "places" in data:
+            for place in data["places"]:
+                lat = place.get("location", {}).get("latitude")
+                lng = place.get("location", {}).get("longitude")
+                
+                if lat and lng:
+                    # 使用原本的哈維辛公式精準計算使用者與店家的直線距離
+                    dist = haversine(user_lat, user_lng, lat, lng)
+                    
+                    # 如果是 Text Search，需要手動過濾超出代步工具圈的店家
+                    if keyword.strip() and dist > max_distance_km:
+                        continue
+                    
+                    # 轉換營業狀態為好看的標籤
+                    open_now = place.get("regularOpeningHours", {}).get("openNow")
+                    if open_now is True:
+                        status = "🟢 營業中"
+                    elif open_now is False:
+                        status = "🔴 休息中"
+                    else:
+                        status = "⏳ 營業時間請見 Google"
+
+                    cafe_list.append({
+                        "name": place.get("displayName", {}).get("text", "未知店名"),
+                        "address": place.get("formattedAddress", "無地址"),
+                        "open_hours": status,
+                        "lat": lat,
+                        "lng": lng,
+                        "distance": dist
+                    })
+        return pd.DataFrame(cafe_list)
+    except Exception as e:
+        st.error(f"📡 Google API 連線失敗: {e}")
+        return pd.DataFrame()
+
 
 # ─── Streamlit 前端網頁介面設計 ───
 st.title("☕ 桃憩時光 (Tao-Café Finder)")
@@ -101,14 +184,12 @@ current_loc_title = "中壢火車站"
 if location_consent == "✅ 同意授權使用我目前的真實 GPS 定位":
     st.info("👇 請點擊下方按鈕，讓瀏覽器確認這是您本人的操作")
     
-    # --- 新增的 CSS 樣式魔法 ---
     st.markdown(
         """
         <style>
-        /* 找到定位按鈕並把它放大 */
         button[title="Get Location"] {
-            transform: scale(10.0); /* 這裡的 2.0 代表放大兩倍，你可以改成 1.5 或是 3.0 */
-            transform-origin: left center; /* 讓它從左邊開始放大，避免跑版 */
+            transform: scale(2.0); 
+            transform-origin: left center; 
             margin-top: 15px;
             margin-bottom: 15px;
             margin-left: 10px;
@@ -117,9 +198,7 @@ if location_consent == "✅ 同意授權使用我目前的真實 GPS 定位":
         """,
         unsafe_allow_html=True
     )
-    # ----------------------------
 
-    # 產生一個 Apple 信任的實體按鈕
     gps_location = streamlit_geolocation()
     
     if gps_location and gps_location.get('latitude') is not None:
@@ -136,8 +215,15 @@ if location_consent == "✅ 同意授權使用我目前的真實 GPS 定位":
         """)
         st.info("ℹ️ 目前地圖暫時先幫您以預設起點【中壢火車站】載入。")
 
-# ─── 側邊欄與地圖渲染 (維持原樣) ───
+# ─── 側邊欄與搜尋控制 ───
 st.sidebar.header("🔍 搜尋與篩選條件")
+
+# 新增：搜尋模式切換器
+search_mode = st.sidebar.radio(
+    "🧱 請選擇資料來源模式：",
+    ("📂 本地資料庫 (精選氛圍標籤)", "🌐 Google Maps Live (即時最新店家)")
+)
+
 user_keyword = st.sidebar.text_input("請輸入咖啡廳店名關鍵字：", placeholder="例如：妮咖啡...")
 transport_mode = st.sidebar.selectbox("🚗 請選擇您的代步工具：", ("🚶 步行", "🛵 機車", "🚗 汽車"))
 
@@ -163,47 +249,66 @@ else:
 travel_minutes = st.sidebar.slider(time_label, min_value=5, max_value=max_time_value, value=default_time_value, step=5)
 max_dist = travel_minutes * speed_per_minute
 
-st.sidebar.write("📌 空間與氛圍標籤（可複選）：")
-tag_dict = {
-    "pudding": st.sidebar.checkbox("🍮 布丁好吃"),
-    "basque": st.sidebar.checkbox("🍰 巴斯克好吃"),
-    "midnight": st.sidebar.checkbox("🌙 主打深夜"),
-    "study": st.sidebar.checkbox("💻 適合讀書"),
-    "chat": st.sidebar.checkbox("💬 適合聊天"),
-    "photo": st.sidebar.checkbox("📷 適合拍照"),
-}
-active_tags = [key for key, value in tag_dict.items() if value]
+# 根據搜尋模式，切換側邊欄 UI 展示
+if search_mode == "📂 本地資料庫 (精選氛圍標籤)":
+    st.sidebar.write("📌 空間與氛圍標籤（可複選）：")
+    tag_dict = {
+        "pudding": st.sidebar.checkbox("🍮 布丁好吃"),
+        "basque": st.sidebar.checkbox("🍰 巴斯克好吃"),
+        "midnight": st.sidebar.checkbox("🌙 主打深夜"),
+        "study": st.sidebar.checkbox("💻 適合讀書"),
+        "chat": st.sidebar.checkbox("💬 適合聊天"),
+        "photo": st.sidebar.checkbox("📷 適合拍照"),
+    }
+    active_tags = [key for key, value in tag_dict.items() if value]
+    
+    # 執行本地 CSV 篩選
+    results = search_cafes(my_lat, my_lng, active_tags, keyword=user_keyword, max_distance_km=max_dist)
+else:
+    st.sidebar.info("ℹ️ Google Maps Live 模式直接對接官方實時資料庫，暫不支援自訂氛圍標籤篩選。")
+    
+    # 執行 Google API 即時線上抓取
+    with st.spinner("正在即時連線 Google Maps 獲取最新情報..."):
+        results = search_google_cafes(my_lat, my_lng, max_distance_km=max_dist, keyword=user_keyword)
 
-results = search_cafes(my_lat, my_lng, active_tags, keyword=user_keyword, max_distance_km=max_dist)
 
-st.write(f"### 📍 地圖與搜尋結果")
+# ─── 地圖與搜尋結果渲染 ───
+st.write(f"### 📍 地圖與搜尋結果 ({search_mode})")
 action_verb = "步行" if "步行" in transport_mode else ("騎車" if "機車" in transport_mode else "開車")
 
 current_zoom = 16 if "步行" in transport_mode else 14
 mymap = folium.Map(location=[my_lat, my_lng], zoom_start=current_zoom)
 
+# 標記起點
 folium.Marker(
     location=[my_lat, my_lng],
     popup=f"<b>🎯 起點：{current_loc_title}</b>",
     icon=folium.Icon(color="red", icon=icon_name, prefix="fa"),
 ).add_to(mymap)
 
+# 標記咖啡廳
 if not results.empty:
-    st.success(f"幫您找到 {len(results)} 間符合條件的咖啡廳：")
+    st.success(f"🎉 在您的 {travel_minutes} 分鐘 {action_verb}圈內，幫您找到 {len(results)} 間咖啡廳：")
     for _, row in results.iterrows():
         t_time = round(row["distance"] / speed_per_minute)
         t_time = 1 if t_time < 1 else t_time
-        popup_text = f"<b>{row['name']}</b><br>距離：{row['distance']:.2f} km<br>{action_verb}約：{t_time} 分鐘<br>營業時間：{row['open_hours']}"
+        popup_text = f"<b>{row['name']}</b><br>距離：{row['distance']:.2f} km<br>{action_verb}約：{t_time} 分鐘<br>狀態：{row['open_hours']}"
+        
         folium.Marker(
             location=[row["lat"], row["lng"]],
             popup=popup_text,
             icon=folium.Icon(color="blue", icon="coffee", prefix="fa"),
         ).add_to(mymap)
 else:
-    st.warning(f"💡 提示：目前定位在【{current_loc_title}】，在您選擇的交通時間內暫無搜尋到咖啡廳。")
+    st.warning(f"💡 提示：目前定位在【{current_loc_title}】，在您選擇的交通時間與篩選條件內，暫時沒有搜尋到咖啡廳。")
 
+# 渲染地圖
 st_folium(mymap, width=850, height=500, key="cafe_map")
 
+# 顯示詳細資料列表
 if not results.empty:
     st.write("#### 📝 店家詳細資訊清單：")
-    st.dataframe(results[["name", "address", "open_hours", "distance"]], use_container_width=True)
+    # 將欄位名稱重命名，讓前端表格更精緻好看
+    display_df = results[["name", "address", "open_hours", "distance"]].copy()
+    display_df.columns = ["店家名稱", "完整地址", "營業狀態/時間", "距離 (km)"]
+    st.dataframe(display_df.sort_values(by="距離 (km)"), use_container_width=True)
